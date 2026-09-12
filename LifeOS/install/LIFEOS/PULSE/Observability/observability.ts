@@ -71,6 +71,11 @@ export interface ObservabilityConfig {
 
 // ── Path Construction ──
 
+// [TECH] Resolve the user's home directory once, then derive absolute paths for each
+//        telemetry source. Route handlers can therefore read shared state without
+//        depending on the process working directory.
+// [ELI5] This tells Pulse where the LifeOS notebook lives, even when it starts from
+//        a different folder.
 const HOME = process.env.HOME ?? process.env.USERPROFILE ?? homedir()
 const LIFEOS_DIR = join(HOME, ".claude", "LIFEOS")
 const MEMORY_DIR = join(LIFEOS_DIR, "MEMORY")
@@ -136,9 +141,11 @@ function readJsonlTail(filePath: string, maxLines = 100): any[] {
   return parsed.slice(-maxLines)
 }
 
-// Byte-bounded JSONL tail: read only the last maxBytes of a file, drop the
-// (possibly partial) first line, parse the rest. tool-activity.jsonl is ~76MB;
-// reading it whole per request is banned (capabilities ISA C2/A1).
+// [TECH] Read only the final maxBytes of a JSONL file, discard a partial first line,
+//        and parse complete records. This bounds memory and latency for large logs;
+//        malformed records are ignored and file errors return an empty result.
+// [ELI5] The dashboard reads the newest notes from a giant notebook without trying
+//        to carry the whole notebook in memory.
 function readJsonlByteTail(filePath: string, maxBytes: number): any[] {
   try {
     if (!existsSync(filePath)) return []
@@ -196,6 +203,11 @@ function getDashboardDir(): string {
   return dir
 }
 
+// [TECH] Map extensionless dashboard routes to either a sibling HTML file or an
+//        index.html, then serve only paths that resolve safely under the dashboard
+//        directory. Unknown files return null so the API fallback can respond.
+// [ELI5] This lets a dashboard link like /health find its page while missing pages
+//        fail cleanly instead of breaking the server.
 async function serveStaticFile(pathname: string): Promise<Response | null> {
   const dashDir = getDashboardDir()
   let filePath = join(dashDir, pathname)
@@ -323,6 +335,11 @@ function evictSeriesByAge<T extends { ts: number }>(map: Map<string, T[]>, now: 
   }
 }
 
+// [TECH] Fold only new complete work-event lines into the cached per-ISA progress
+//        series, resetting after log compaction and evicting excess series by count.
+//        The cache keeps the realtime poller from rescanning an unchanged append-only log.
+// [ELI5] This turns new work notes into the progress lines on the dashboard without
+//        rereading the whole history every time the screen refreshes.
 export function getClimbData(): Map<string, ClimbPoint[]> {
   try {
     if (!existsSync(WORK_EVENTS_PATH)) return new Map()
